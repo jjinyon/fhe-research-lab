@@ -75,7 +75,7 @@ python 파일경로.py
 예:
 
 ```bash
-python 01_ckks_basics/01_context.py
+python python 01_basics/01_context.py
 ```
 
 작성한 실험 코드를 실행합니다.
