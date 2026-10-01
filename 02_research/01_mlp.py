@@ -7,7 +7,7 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 from pathlib import Path
 
-# python 01_research/01_mlp.py
+# python 02_research/01_mlp.py
 
 # 재현성을 위한 시드
 np.random.seed(42)
