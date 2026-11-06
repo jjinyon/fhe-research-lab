@@ -958,3 +958,151 @@ Modulus Chain
 이 등장하기 시작한다.
 
 따라서 `03_encrypt_decrypt.py`에서는 **CKKS의 데이터 흐름**을 이해하고, 다음 실험부터는 **CKKS가 실제로 암호문에서 계산을 수행하는 과정**을 관찰한다.
+
+---
+
+# 26. 실험: 곱셈 깊이와 Level 관찰 (`06_depth_level.py`)
+
+## 26-1. 실험 방법
+
+암호문 \(x\)를 만든 뒤 `EvalMult`로 제곱을 반복한다.
+
+```text
+x → x^2 → x^4 → x^8 → x^16 → x^32
+```
+
+매 단계마다 다음 값을 출력한다.
+
+* `GetLevel()`: 지금까지 소모한 level
+* `GetScalingFactor()`: 현재 scale
+* max error: 복호화 값과 실제 값의 최대 차이
+
+같은 실험을 세 가지 설정으로 수행한다.
+
+```python
+run(depth=3, num_squarings=3)   # depth 안에서 곱셈
+run(depth=3, num_squarings=5)   # depth를 초과해서 곱셈
+run(depth=5, num_squarings=5)   # depth를 늘린 경우
+```
+
+## 26-2. 실험 결과
+
+```text
+[depth 3, 곱셈 3번]
+step 0  x^1   level = 0  scale = 2^69.1
+step 1  x^2   level = 1  scale = 2^100   error = 1.9e-13
+step 2  x^4   level = 2  scale = 2^100   error = 6.7e-13
+step 3  x^8   level = 3  scale = 2^100   error = 2.1e-12
+
+[depth 3, 곱셈 5번]
+step 1~3      위와 동일하게 정상
+step 4        Decrypt 실패
+              "The decryption failed because the approximation error is too high."
+
+[depth 5, 곱셈 5번]
+step 4  x^16  level = 4  scale = 2^100   error = 3.2e-11
+step 5  x^32  level = 5  scale = 2^100   error = 9.2e-10
+```
+
+## 26-3. 시사점
+
+### ① 곱셈 1번 = level 1 소모
+
+곱셈을 할 때마다 level이 정확히 1씩 증가한다.
+
+OpenFHE의 `GetLevel()`은 **남은 level이 아니라 소모한 level**을 의미한다.
+
+```text
+level 0 (fresh) → 1 → 2 → ... → depth (한계)
+```
+
+17번에서 정리한 Multiplicative Depth가 실제로 "곱셈을 몇 단계까지 할 수 있는가"를 결정한다는 것을 확인했다.
+
+### ② depth를 넘으면 계산이 깨진다
+
+depth = 3인데 4번째 곱셈을 수행하면 복호화에 실패한다.
+
+중요한 점은 **`EvalMult` 자체는 에러 없이 실행된다**는 것이다.
+
+```text
+EvalMult  → 성공 (에러 없음)
+Decrypt   → 실패
+```
+
+즉 잘못된 계산을 하고 있어도 연산 중에는 알 수 없고, 복호화할 때 비로소 드러난다.
+
+따라서 회로를 설계할 때 **곱셈 깊이를 미리 계산하고 그에 맞게 depth를 설정해야 한다**.
+
+### ③ Rescaling이 자동으로 수행되고 있다
+
+곱셈을 하면 원래 scale은
+
+$$
+\Delta \rightarrow \Delta^2
+$$
+
+로 커져야 한다 (19번 참고).
+
+하지만 실험에서는 곱셈 후 scale이 계속 \(2^{100}\) 근처로 유지된다.
+
+이는 OpenFHE의 기본 scaling 방식인 `FLEXIBLEAUTOEXT`가 `EvalMult` 내부에서 **rescaling을 자동으로 처리**하기 때문이다.
+
+```text
+EvalMult
+   ↓
+Scale 증가 (Δ → Δ^2)
+   ↓
+자동 Rescaling
+   ↓
+Scale 유지 + level 1 소모
+```
+
+즉 level 1 소모 = modulus chain에서 \(q_i\) 하나가 제거된 것이다 (18번 참고).
+
+### ④ 곱셈을 반복할수록 오차가 커진다
+
+```text
+x^2    1.9e-13
+x^4    6.7e-13
+x^8    2.1e-12
+x^16   3.2e-11
+x^32   9.2e-10
+```
+
+곱셈 단계가 늘어날수록 오차가 수 배씩 증가한다.
+
+16번에서 본 것처럼 곱셈에서는
+
+$$
+c_1c_2 = m_1m_2 + m_1e_2 + m_2e_1 + e_1e_2
+$$
+
+메시지와 noise가 서로 곱해지는 항이 생기기 때문이다.
+
+또한 \(x^{32}\)처럼 값 자체가 커지면 (\(1.2^{32} \approx 340\)) 오차도 함께 커진다.
+
+### ⑤ depth를 늘리면 더 많이 곱할 수 있지만 대가가 있다
+
+depth = 5로 설정하면 5번의 곱셈이 모두 정상 동작한다.
+
+하지만 depth를 늘리면
+
+* modulus chain이 길어짐
+* 링 차원 \(N\)이 커질 수 있음
+* 암호문 크기 증가
+* 연산 속도 감소
+
+와 같은 비용이 발생한다.
+
+따라서 **필요한 만큼만 depth를 설정하는 것**이 중요하다.
+
+## 26-4. 한 줄 정리
+
+```text
+곱셈 1번 = level 1 소모 = modulus 1개 제거
+depth = 곱셈할 수 있는 최대 단계 수
+depth 초과 = 연산은 되지만 복호화 실패
+곱셈 반복 = 오차 증가
+```
+
+이 실험을 통해 CKKS에서 **연산 회로의 곱셈 깊이를 설계하는 것이 성능과 정확도를 결정한다**는 것을 확인했다.
