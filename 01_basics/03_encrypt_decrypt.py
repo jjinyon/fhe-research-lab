@@ -6,8 +6,8 @@ from openfhe import *
 def main():
     # 1. CKKS 파라미터 생성
     parameters = CCParamsCKKSRNS()
-    parameters.SetMultiplicativeDepth(2)
-    parameters.SetScalingModSize(50)
+    parameters.SetMultiplicativeDepth(4)
+    parameters.SetScalingModSize(20)
     parameters.SetBatchSize(8)
 
     # 2. CryptoContext 생성
